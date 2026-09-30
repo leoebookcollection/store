@@ -1,0 +1,423 @@
+/* Radiant eBookshop — crypto edition. English. Flat $1 per set. Bot-only. */
+(function () {
+  "use strict";
+  var PAGE = 48;
+
+  function esc(s) {
+    return String(s == null ? "" : s).replace(/[&<>"']/g, function (c) {
+      return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c];
+    });
+  }
+  function fmtSize(b) {
+    b = +b || 0;
+    if (!b) return "—";
+    var u = ["B", "KB", "MB", "GB"], i = 0;
+    while (b >= 1024 && i < 3) { b /= 1024; i++; }
+    return (b >= 100 ? Math.round(b) : b.toFixed(1)) + " " + u[i];
+  }
+  function price(s) { return "$" + (s || PRICE_USD); }
+  function buyUrl(id) { return "https://t.me/" + BOT_USERNAME + "?start=buy_" + id; }
+
+  // deterministic gradient + initials for the title placeholder cover
+  var GRADS = [
+    ["#3a2b12", "#8a5a13"], ["#1f2a3a", "#3f5a7a"], ["#2a1f33", "#5a3a6e"],
+    ["#12332a", "#1f6e52"], ["#33141f", "#7a2a3f"], ["#2b2b2b", "#555555"],
+    ["#40260f", "#a06a1c"], ["#1a2e1a", "#3d6b35"]
+  ];
+  function coverStyle(id) {
+    var h = 0, s = String(id);
+    for (var i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) >>> 0;
+    var g = GRADS[h % GRADS.length];
+    return "background:linear-gradient(135deg," + g[0] + "," + g[1] + ")";
+  }
+  function initials(name) {
+    var w = String(name || "").replace(/[^A-Za-z0-9 ]/g, " ").split(" ").filter(Boolean);
+    var t = (w[0] ? w[0][0] : "") + (w[1] ? w[1][0] : "");
+    return (t || "?").toUpperCase();
+  }
+  // real cover images (fetched from Open Library); falls back to gradient
+  var coverMap = {};
+  var coversReady = null;
+  function ensureCovers() {
+    if (!coversReady) {
+      // cache-bust: covers.json grows as the fetcher runs; never serve stale
+      var bust = "data/covers.json?v=" + Date.now();
+      coversReady = fetch(bust, { cache: "no-cache" }).then(function (r) {
+        if (!r.ok) throw new Error("http " + r.status);
+        return r.json();
+      }).then(function (d) {
+        coverMap = d || {};
+        // Always merge hardcoded manual covers (immune to stale cache)
+        Object.keys(MANUAL_COVERS).forEach(function (id) {
+          coverMap[id] = MANUAL_COVERS[id];
+        });
+        return coverMap;
+      }).catch(function () {
+        // Even if fetch fails, manual covers still work
+        Object.keys(MANUAL_COVERS).forEach(function (id) {
+          coverMap[id] = MANUAL_COVERS[id];
+        });
+        return coverMap;
+      });
+    }
+    return coversReady;
+  }
+  // kick off early so it is likely ready before first render
+  ensureCovers();
+  function coverHTML(id, name) {
+    var c = coverMap[id] || null;
+    if (c) {
+      return '<img class="coverimg" loading="lazy" src="' + esc(c) + '" alt="' +
+        esc(name) + '" onerror="this.outerHTML=window.__coverFallback(\'' + id + '\',\'' +
+        esc(name).replace(/'/g, "\\'") + '\')">';
+    }
+    return '<div class="cover" style="' + coverStyle(id) + '">' + esc(initials(name)) + "</div>";
+  }
+  function coverBannerHTML(id, name) {
+    var c = coverMap[id] || null;
+    if (c) {
+      return '<div class="banner hasimg"><img loading="lazy" src="' + esc(c) + '" alt="' +
+        esc(name) + '"></div>';
+    }
+    return '<div class="banner" style="' + coverStyle(id) + '">' + esc(initials(name)) + "</div>";
+  }
+  window.__coverFallback = function (id, name) {
+    return '<div class="cover" style="' + coverStyle(id) + '">' + esc(initials(name)) + "</div>";
+  };
+
+  var view = document.getElementById("view");
+  var qInput = document.getElementById("q");
+  var homeData = null, allSets = null, allSetsLoading = null;
+
+  function getJSON(url) {
+    return fetch(url, { cache: "force-cache" }).then(function (r) {
+      if (!r.ok) throw new Error("http " + r.status);
+      return r.json();
+    });
+  }
+  function ensureHome() {
+    if (!homeData) homeData = getJSON("data/home.json");
+    return homeData;
+  }
+  // Category tabs: English, Maths, Science, Others
+  var catMap = null, catMapLoading = null, activeCat = "all";
+  function ensureCats() {
+    if (catMap) return Promise.resolve(catMap);
+    if (!catMapLoading) {
+      catMapLoading = getJSON("data/cats.json").then(function (d) {
+        catMap = d || {};
+        return catMap;
+      }).catch(function () { catMap = {}; return catMap; });
+    }
+    return catMapLoading;
+  }
+  function filterByCat(sets) {
+    if (activeCat === "all" || !catMap) return sets;
+    return sets.filter(function (s) { return (catMap[s.id] || "others") === activeCat; });
+  }
+
+  function ensureAll() {
+    if (allSets) return Promise.resolve(allSets);
+    if (!allSetsLoading) {
+      allSetsLoading = getJSON("data/sets.json").then(function (d) {
+        allSets = d.sets || [];
+        return allSets;
+      });
+    }
+    return allSetsLoading;
+  }
+
+  function cardHTML(c) {
+    return '<a class="card" href="#/s/' + c.id + '">' +
+      coverHTML(c.id, c.name) +
+      '<div class="cbody"><div class="cname">' + esc(c.name) + "</div>" +
+      '<div class="cmeta">' + c.file_count + " files · " + esc(fmtSize(c.total_size)) + "</div>" +
+      '<div class="cprice">' + esc(price(c.price)) + "</div></div></a>";
+  }
+
+  function rowHTML(title, countLabel, cards) {
+    return '<section class="row"><div class="rowhead"><h2>' + esc(title) + "</h2>" +
+      '<span class="count">' + countLabel + "</span>" +
+      '<span class="railnav"><button class="railbtn" data-dir="-1" aria-label="‹">‹</button>' +
+      '<button class="railbtn" data-dir="1" aria-label="›">›</button></span></div>' +
+      '<div class="rail">' + cards.map(cardHTML).join("") + "</div></section>";
+  }
+
+  var shownCount = 0, allList = [];
+  function gridHTML(list) {
+    return '<div class="grid" id="allGrid">' + list.map(cardHTML).join("") + "</div>";
+  }
+  function renderMore() {
+    var g = document.getElementById("allGrid");
+    if (!g) return;
+    var next = allList.slice(shownCount, shownCount + PAGE);
+    g.insertAdjacentHTML("beforeend", next.map(cardHTML).join(""));
+    shownCount += next.length;
+    var btn = document.getElementById("moreBtn");
+    if (btn) {
+      if (shownCount >= allList.length) btn.style.display = "none";
+      else btn.textContent = "Show more (" + (allList.length - shownCount) + " left)";
+    }
+  }
+
+  // Hardcoded manual covers (user-curated) - always available, bypasses covers.json cache
+  var MANUAL_COVERS = {
+    "013a9f61ad62": "data/manual_covers/013a9f61ad62.jpg",
+    "e890b6b6ad54": "data/manual_covers/e890b6b6ad54.jpg",
+    "403be5df585d": "data/manual_covers/403be5df585d.jpg",
+    "17443bb0e6c1": "data/manual_covers/17443bb0e6c1.jpg",
+    "0bacac194c9d": "data/manual_covers/0bacac194c9d.jpg",
+    "96a935f10d9d": "data/manual_covers/96a935f10d9d.jpg",
+    "617369eaddf4": "data/manual_covers/617369eaddf4.jpg",
+    "95cca2e24da9": "data/manual_covers/95cca2e24da9.jpg",
+    "5d49c2520499": "data/manual_covers/5d49c2520499.jpg",
+    "3d5dfa2658b6": "data/manual_covers/3d5dfa2658b6.jpg",
+    "8ddb95362154": "data/manual_covers/8ddb95362154.jpg",
+    "d3172b4bee77": "data/manual_covers/d3172b4bee77.jpg",
+    "c65f52c62ede": "data/manual_covers/c65f52c62ede.jpg",
+    "b5d8314e2481": "data/manual_covers/b5d8314e2481.jpg",
+    "89acdcd0aee3": "data/manual_covers/89acdcd0aee3.jpg",
+    "f17d078de28f": "data/manual_covers/f17d078de28f.jpg",
+    "d3cac1c2bfbe": "data/manual_covers/d3cac1c2bfbe.jpg",
+    "293ac78830fe": "data/manual_covers/293ac78830fe.jpg",
+    "7e9884c4a5d3": "data/manual_covers/7e9884c4a5d3.jpg",
+    "25fb3e563149": "data/manual_covers/25fb3e563149.jpg",
+    "5fd7eaf90f7f": "data/manual_covers/5fd7eaf90f7f.jpg",
+    "b9ee3916e675": "data/manual_covers/b9ee3916e675.jpg",
+    "f5fe60137ca8": "data/manual_covers/f5fe60137ca8.jpg",
+    "219179056d1a": "data/manual_covers/219179056d1a.jpg",
+    "902fe5e6299a": "data/manual_covers/902fe5e6299a.jpg",
+    "2b4940b520e7": "data/manual_covers/2b4940b520e7.jpg",
+    "053b11f45b1a": "data/manual_covers/053b11f45b1a.jpg",
+    "9ccdd0cff17f": "data/manual_covers/9ccdd0cff17f.jpg",
+    "630a69a24b04": "data/manual_covers/630a69a24b04.jpg",
+    "db81bf6c2991": "data/manual_covers/db81bf6c2991.jpg",
+    "319fe3d0e5ae": "data/manual_covers/319fe3d0e5ae.jpg",
+    "9ea3bcd4e121": "data/manual_covers/9ea3bcd4e121.jpg",
+    "a1c54e08b67d": "data/manual_covers/a1c54e08b67d.jpg",
+    "210c52da": "data/manual_covers/210c52da.jpg",
+    "e872380a": "data/manual_covers/e872380a.jpg",
+    "50a0a047": "data/manual_covers/50a0a047.jpg",
+    "39179264": "data/manual_covers/39179264.jpg",
+    "0a70c8e7": "data/manual_covers/0a70c8e7.jpg",
+    "2e47135c": "data/manual_covers/2e47135c.jpg",
+    "fb6f716a": "data/manual_covers/fb6f716a.jpg",
+    "e93bb4d6": "data/manual_covers/e93bb4d6.jpg",
+    "417d54e4": "data/manual_covers/417d54e4.jpg",
+    "b7815826": "data/manual_covers/b7815826.jpg",
+    "46be39f3": "data/manual_covers/46be39f3.jpg",
+    "efec7422baca": "data/manual_covers/efec7422baca.jpg",
+    "e315c7c24149": "data/manual_covers/e315c7c24149.jpg",
+    "1ae71dc3ea98": "data/manual_covers/1ae71dc3ea98.jpg"
+  };
+
+  function renderHome() {
+    view.innerHTML = '<div class="loading">Loading…</div>';
+    Promise.all([ensureHome(), ensureCovers(), ensureAll(), ensureCats()]).then(function (arr) {
+      var d = arr[0], cmap = arr[1], sets = arr[2];
+      var html = "";
+      // When a specific category is active, show ONLY the filtered grid (no Featured/series)
+      var catActive = activeCat !== "all";
+      if (!catActive) {
+      // Featured: books with manual covers (user-curated) at the very top
+      // Merge hardcoded manual covers into coverMap (bypasses stale covers.json)
+      Object.keys(MANUAL_COVERS).forEach(function (id) {
+        cmap[id] = MANUAL_COVERS[id];
+      });
+      var manualIds = Object.keys(MANUAL_COVERS);
+      if (manualIds.length) {
+        var byId = {};
+        sets.forEach(function (s) { byId[s.id] = s; });
+        var featured = manualIds.map(function (id) { return byId[id]; })
+          .filter(Boolean);
+        if (featured.length) {
+          html += rowHTML("⭐ Featured", featured.length + " sets", featured);
+        }
+      }
+      d.series.forEach(function (r) {
+        html += rowHTML(r.name, r.count + " sets", r.sets);
+      });
+      if (d.new && d.new.length) {
+        html += rowHTML("🆕 New arrivals", d.new.length + " sets", d.new);
+      }
+      } // end if (!catActive)
+      var catTitles = {all: "📚 All books", english: "📚 English books", maths: "📚 Maths books", science: "📚 Science books", others: "📚 Other books"};
+      html += '<h2 class="section-title">' + (catTitles[activeCat] || catTitles.all) + '</h2><div id="homeAll"><div class="loading">Loading…</div></div>';
+      view.innerHTML = html;
+      Promise.all([ensureAll(), ensureCats()]).then(function (arr2) {
+        var sets = arr2[0], cats = arr2[1];
+        // Education first (english/maths/science), covers prioritized, others (novels/anime) last
+        function catRank(s) {
+          var c = (cats && cats[s.id]) || "others";
+          if (c === "english" || c === "maths" || c === "science") return 0;
+          return 1;
+        }
+        function hasCover(s) { return (cmap && cmap[s.id]) ? 0 : 1; }
+        allList = filterByCat(sets.slice()).sort(function (a, b) {
+          var r = catRank(a) - catRank(b);
+          if (r) return r;
+          r = hasCover(a) - hasCover(b);
+          if (r) return r;
+          return a.name.localeCompare(b.name, undefined, { numeric: true });
+        });
+        shownCount = 0;
+        var host = document.getElementById("homeAll");
+        if (!host) return;
+        host.innerHTML = gridHTML(allList.slice(0, PAGE)) +
+          '<div class="more-wrap"><button class="more-btn" id="moreBtn">Show more</button></div>';
+        shownCount = Math.min(PAGE, allList.length);
+        document.getElementById("moreBtn").addEventListener("click", renderMore);
+        renderMoreBtn();
+      });
+      function renderMoreBtn() {
+        var btn = document.getElementById("moreBtn");
+        if (btn && shownCount >= allList.length) btn.style.display = "none";
+      }
+    }).catch(function () {
+      view.innerHTML = '<div class="empty">Could not load data. Please try again shortly.</div>';
+    });
+    if (document.activeElement === qInput) qInput.blur();
+  }
+
+  function searchSets(sets, q) {
+    var toks = q.toLowerCase().split(/\s+/).filter(Boolean);
+    if (!toks.length) return [];
+    var out = [];
+    for (var i = 0; i < sets.length; i++) {
+      var s = sets[i];
+      var hay = (s.name + " " + (s.key || "")).toLowerCase();
+      var ok = true;
+      for (var t = 0; t < toks.length; t++) {
+        if (hay.indexOf(toks[t]) < 0) { ok = false; break; }
+      }
+      if (!ok) continue;
+      var nl = s.name.toLowerCase(), ql = q.toLowerCase();
+      var rank = nl.indexOf(ql) === 0 ? 0 : (nl.indexOf(ql) > -1 ? 1 : 2);
+      out.push({ s: s, rank: rank });
+    }
+    out.sort(function (a, b) {
+      return a.rank - b.rank || a.s.name.length - b.s.name.length;
+    });
+    return out.map(function (x) { return x.s; });
+  }
+
+  function renderSearch(rawQ) {
+    var q = (rawQ || "").trim();
+    qInput.value = q;
+    if (!q) { location.hash = "#/"; return; }
+    view.innerHTML = '<div class="loading">Searching…</div>';
+    Promise.all([ensureAll(), ensureCovers()]).then(function (arr) {
+      var sets = arr[0];
+      var hits = searchSets(sets, q);
+      var html = '<a class="back" href="#/">‹ Back</a>' +
+        '<div class="res-head">' + hits.length + ' result' + (hits.length === 1 ? "" : "s") +
+        ' for "' + esc(q) + '":</div>';
+      if (!hits.length) {
+        html += '<div class="empty">Nothing found. Try the full book name, ' +
+          'or ask in <a href="https://t.me/' + BOT_USERNAME + '">the bot</a>.</div>';
+      } else {
+        html += '<div class="res-list">' + hits.slice(0, 120).map(function (s, i) {
+          return '<a class="res-item" href="#/s/' + s.id + '">' +
+            '<span class="rnum">' + (i + 1) + ".</span>" +
+            coverHTML(s.id, s.name) +
+            '<div class="rbody"><div class="rname">' + esc(s.name) + "</div>" +
+            '<div class="rmeta">' + s.file_count + " files · " + esc(fmtSize(s.total_size)) + "</div></div>" +
+            '<div class="rprice">' + esc(price(s.price)) + "</div></a>";
+        }).join("") + "</div>";
+        if (hits.length > 120) {
+          html += '<div class="empty">Showing the first 120 — please refine your search.</div>';
+        }
+      }
+      view.innerHTML = html;
+      window.scrollTo(0, 0);
+    }).catch(function () {
+      view.innerHTML = '<div class="empty">Could not load data. Please try again shortly.</div>';
+    });
+  }
+
+  function renderDetail(id) {
+    view.innerHTML = '<div class="loading">Loading…</div>';
+    Promise.all([getJSON("data/sets/" + encodeURIComponent(id) + ".json"), ensureCovers()]).then(function (arr) {
+      var d = arr[0];
+      var comps = (d.components && d.components.length)
+        ? d.components.join(", ") : "—";
+      var files = (d.items || []).map(function (f) {
+        var src = f.src === "local"
+          ? '<span class="src local">instant</span>'
+          : '';
+        return '<li><span class="fn">' + esc(f.n) + src + '</span>' +
+          '<span class="fs">' + esc(fmtSize(f.s)) + "</span></li>";
+      }).join("");
+      window._detail = { id: d.id, name: d.name };
+      view.innerHTML =
+        '<a class="back" href="javascript:history.back()">‹ Back</a>' +
+        coverBannerHTML(d.id, d.name) +
+        "<h1 class='dtitle'>" + esc(d.name) + "</h1>" +
+        '<div class="dseries">' + esc(d.series || "") + "</div>" +
+        '<div class="chips">' + (d.components || []).map(function (c) {
+          return '<span class="chip">' + esc(c) + "</span>";
+        }).join("") + "</div>" +
+        '<div class="dbox">📦 Contents (' + d.file_count + " files):<br>" + esc(comps) + "</div>" +
+        '<div class="dbox"><ul class="files">' + files + "</ul></div>" +
+        '<div class="dbox">Total size: <b>' + esc(fmtSize(d.total_size)) + "</b></div>" +
+        '<div class="buy-note" style="display:block">Tapping Buy opens our Telegram bot. ' +
+        "We accept crypto payments only — pay with USDT, USDC, USDe, USD1, BNB, ETH, XRP, TON or USDT-TON " +
+        "and receive your files right in the chat.</div>" +
+        '<div class="buybar"><div class="bprice">' + esc(price(d.price)) +
+        "<small>per set</small></div>" +
+        '<div class="buybtns">' +
+        '<a class="buybtn" href="' + buyUrl(d.id) + '" target="_blank" rel="noopener">Buy 🛒</a>' +
+        "</div></div>";
+      window.scrollTo(0, 0);
+    }).catch(function () {
+      view.innerHTML = '<a class="back" href="#/">‹ Back</a>' +
+        '<div class="empty">This book is no longer available. <a href="#/">Back to home</a>.</div>';
+    });
+  }
+
+  function route() {
+    var h = location.hash || "#/";
+    document.body.classList.toggle("has-buybar", h.indexOf("#/s/") === 0);
+    if (h.indexOf("#/s/") === 0) renderDetail(h.slice(4).split("?")[0]);
+    else if (h.indexOf("#/search/") === 0) renderSearch(decodeURIComponent(h.slice(9)));
+    else {
+      if (qInput.value === "" && document.activeElement !== qInput) { /* keep typed text */ }
+      renderHome();
+    }
+  }
+
+  document.getElementById("searchForm").addEventListener("submit", function (e) {
+    e.preventDefault();
+    var q = qInput.value.trim();
+    if (q) location.hash = "#/search/" + encodeURIComponent(q);
+  });
+  window.addEventListener("hashchange", route);
+  // Rail left/right nav buttons (desktop)
+  document.addEventListener("click", function (e) {
+    var btn = e.target.closest("button.railbtn");
+    if (!btn) return;
+    var row = btn.closest("section.row");
+    var rail = row && row.querySelector(".rail");
+    if (!rail) return;
+    var dir = parseInt(btn.getAttribute("data-dir"), 10) || 1;
+    rail.scrollBy({ left: dir * rail.clientWidth * 0.8, behavior: "smooth" });
+  });
+  // Category tab clicks
+  document.getElementById("catTabs").addEventListener("click", function (e) {
+    var btn = e.target.closest("button[data-cat]");
+    if (!btn) return;
+    activeCat = btn.getAttribute("data-cat");
+    var buttons = this.querySelectorAll("button");
+    for (var i = 0; i < buttons.length; i++) {
+      buttons[i].classList.toggle("active", buttons[i] === btn);
+    }
+    // Re-render home with filter (if on home page)
+    var h = location.hash || "#/";
+    if (h === "#/" || h === "") {
+      route();
+    } else {
+      location.hash = "#/";
+    }
+  });
+  route();
+})();
