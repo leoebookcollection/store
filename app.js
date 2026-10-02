@@ -127,37 +127,11 @@
     return allSetsLoading;
   }
 
-
-  var DL = {}, dlReady = null;
-  function ensureDL() {
-    if (!dlReady) {
-      dlReady = fetch("data/downloads.json", { cache: "no-cache" }).then(function (r) {
-        return r.ok ? r.json() : {};
-      }).then(function (d) { DL = d || {}; return DL; })
-        .catch(function () { DL = {}; return DL; });
-    }
-    return dlReady;
-  }
-  ensureDL();
-  function dlSeed(c) {
-    // stable display base from the set id (same on both ebook stores),
-    // tiered by set size, always under 100
-    var h = 0, s = String(c.id);
-    for (var i = 0; i < s.length; i++) h = ((h << 5) - h + s.charCodeAt(i)) | 0;
-    h = Math.abs(h);
-    var fc = c.file_count || 1;
-    if (fc >= 6) return 35 + (h % 25);
-    if (fc >= 3) return 20 + (h % 20);
-    return 8 + (h % 15);
-  }
-  function dlOf(c) { return dlSeed(c) + (DL[c.id] || 0); }
-
   function cardHTML(c) {
     return '<a class="card" href="#/s/' + c.id + '">' +
       coverHTML(c.id, c.name) +
       '<div class="cbody"><div class="cname">' + esc(c.name) + "</div>" +
-      '<div class="cmeta">' + c.file_count + " files · " + esc(fmtSize(c.total_size)) +
-      ' <span class="dlc">⬇ ' + dlOf(c) + " downloads</span></div>" +
+      '<div class="cmeta">' + c.file_count + " files · " + esc(fmtSize(c.total_size)) + "</div>" +
       '<div class="cprice">' + esc(price(c.price)) + "</div></div></a>";
   }
 
@@ -185,6 +159,11 @@
       else btn.textContent = "Show more (" + (allList.length - shownCount) + " left)";
     }
   }
+
+  // Series pushed to the very bottom of the page (owner's rule 2026-10-02):
+  // 0-cover / wrong-cover / non-educational heavyweights never sit at the top.
+  var DEMOTED_SERIES = ["personal best ame", "cambridge ielts practice test book",
+    "spy×family", "everybody up", "family and friends"];
 
   // Hardcoded manual covers (user-curated) - always available, bypasses covers.json cache
   var MANUAL_COVERS = {
@@ -247,74 +226,9 @@
     "8ce78f37a701": "data/manual_covers/8ce78f37a701.jpg"
   };
 
-
-  var heroTimer = null;
-  function heroHTML(featured) {
-    function slide(s) {
-      var img = coverMap[s.id]
-        ? '<img class="hero-img" src="' + esc(coverMap[s.id]) + '" alt="" loading="lazy">'
-        : '<div class="hero-img hero-fbk" style="' + coverStyle(s.id) + '">' +
-          esc(initials(s.name)) + "</div>";
-      return '<a class="hero-slide" href="#/s/' + s.id + '">' + img +
-        '<div class="hero-body"><div class="hero-tag">\u2B50 Featured</div>' +
-        '<div class="hero-title">' + esc(s.name) + "</div>" +
-        '<div class="hero-meta">' + s.file_count + " files \u00B7 " + esc(fmtSize(s.total_size)) +
-        ' \u00B7 <span class="dlc">\u2B07 ' + dlOf(s) + " downloads</span></div>" +
-        '<div class="hero-price">' + esc(price(s.price)) + "</div></div></a>";
-    }
-    var dots = "";
-    featured.forEach(function (_, i) {
-      dots += '<button class="hero-dot' + (i === 0 ? " on" : "") +
-        '" type="button" data-i="' + i + '" aria-label="slide ' + (i + 1) + '"></button>';
-    });
-    return '<div class="hero-slider"><div class="hero-track" id="heroTrack">' +
-      featured.map(slide).join("") + "</div>" +
-      '<button class="hero-nav prev" type="button" id="heroPrev">\u2039</button>' +
-      '<button class="hero-nav next" type="button" id="heroNext">\u203A</button>' +
-      '<div class="hero-dots">' + dots + "</div></div>";
-  }
-  function initHero() {
-    var track = document.getElementById("heroTrack");
-    if (!track || track.children.length < 2) return;
-    var slides = track.children.length, idx = 0;
-    var dots = track.parentElement.querySelectorAll(".hero-dot");
-    function go(i) {
-      idx = (i + slides) % slides;
-      track.style.transform = "translateX(-" + idx * 100 + "%)";
-      Array.prototype.forEach.call(dots, function (d, j) {
-        d.classList.toggle("on", j === idx);
-      });
-    }
-    function auto() {
-      clearInterval(heroTimer);
-      heroTimer = setInterval(function () {
-        if (!document.body.contains(track)) { clearInterval(heroTimer); return; }
-        go(idx + 1);
-      }, 4500);
-    }
-    var prev = document.getElementById("heroPrev");
-    var next = document.getElementById("heroNext");
-    if (prev) prev.onclick = function () { go(idx - 1); auto(); };
-    if (next) next.onclick = function () { go(idx + 1); auto(); };
-    Array.prototype.forEach.call(dots, function (d) {
-      d.onclick = function () { go(+d.dataset.i); auto(); };
-    });
-    var x0 = null;
-    track.addEventListener("touchstart", function (e) {
-      x0 = e.touches[0].clientX;
-    }, { passive: true });
-    track.addEventListener("touchend", function (e) {
-      if (x0 === null) return;
-      var dx = e.changedTouches[0].clientX - x0;
-      if (Math.abs(dx) > 40) { go(idx + (dx < 0 ? 1 : -1)); auto(); }
-      x0 = null;
-    }, { passive: true });
-    go(0); auto();
-  }
-
   function renderHome() {
     view.innerHTML = '<div class="loading">Loading…</div>';
-    Promise.all([ensureHome(), ensureCovers(), ensureAll(), ensureCats(), ensureDL()]).then(function (arr) {
+    Promise.all([ensureHome(), ensureCovers(), ensureAll(), ensureCats()]).then(function (arr) {
       var d = arr[0], cmap = arr[1], sets = arr[2];
       var html = "";
       // When a specific category is active, show ONLY the filtered grid (no Featured/series)
@@ -332,7 +246,7 @@
         var featured = manualIds.map(function (id) { return byId[id]; })
           .filter(Boolean);
         if (featured.length) {
-          html += heroHTML(featured.slice(0, 5));
+          html += rowHTML("⭐ Featured", featured.length + " sets", featured);
         }
       }
       d.series.forEach(function (r) {
@@ -345,7 +259,6 @@
       var catTitles = {all: "📚 All books", english: "📚 English books", maths: "📚 Maths books", science: "📚 Science books", others: "📚 Other books"};
       html += '<h2 class="section-title">' + (catTitles[activeCat] || catTitles.all) + '</h2><div id="homeAll"><div class="loading">Loading…</div></div>';
       view.innerHTML = html;
-      initHero();
       Promise.all([ensureAll(), ensureCats()]).then(function (arr2) {
         var sets = arr2[0], cats = arr2[1];
         // Education first (english/maths/science), covers prioritized, others (novels/anime) last
@@ -356,7 +269,12 @@
         }
         function hasCover(s) { return (cmap && cmap[s.id]) ? 0 : 1; }
         allList = filterByCat(sets.slice()).sort(function (a, b) {
-          var r = catRank(a) - catRank(b);
+          var r = (DEMOTED_SERIES.indexOf((a.series || "").trim().toLowerCase()) !== -1 ? 1 : 0) -
+                  (DEMOTED_SERIES.indexOf((b.series || "").trim().toLowerCase()) !== -1 ? 1 : 0);
+          if (r) return r;
+          r = (MANUAL_COVERS[a.id] ? 0 : 1) - (MANUAL_COVERS[b.id] ? 0 : 1);
+          if (r) return r;
+          r = catRank(a) - catRank(b);
           if (r) return r;
           r = hasCover(a) - hasCover(b);
           if (r) return r;
@@ -408,7 +326,7 @@
     qInput.value = q;
     if (!q) { location.hash = "#/"; return; }
     view.innerHTML = '<div class="loading">Searching…</div>';
-    Promise.all([ensureAll(), ensureCovers(), ensureDL()]).then(function (arr) {
+    Promise.all([ensureAll(), ensureCovers()]).then(function (arr) {
       var sets = arr[0];
       var hits = searchSets(sets, q);
       var html = '<a class="back" href="#/">‹ Back</a>' +
@@ -439,7 +357,7 @@
 
   function renderDetail(id) {
     view.innerHTML = '<div class="loading">Loading…</div>';
-    Promise.all([getJSON("data/sets/" + encodeURIComponent(id) + ".json"), ensureCovers(), ensureDL()]).then(function (arr) {
+    Promise.all([getJSON("data/sets/" + encodeURIComponent(id) + ".json"), ensureCovers()]).then(function (arr) {
       var d = arr[0];
       var comps = (d.components && d.components.length)
         ? d.components.join(", ") : "—";
@@ -461,8 +379,7 @@
         }).join("") + "</div>" +
         '<div class="dbox">📦 Contents (' + d.file_count + " files):<br>" + esc(comps) + "</div>" +
         '<div class="dbox"><ul class="files">' + files + "</ul></div>" +
-        '<div class="dbox">Total size: <b>' + esc(fmtSize(d.total_size)) +
-        '</b> · <span class="dlc">⬇ ' + dlOf(d) + " downloads</span></div>" +
+        '<div class="dbox">Total size: <b>' + esc(fmtSize(d.total_size)) + "</b></div>" +
         '<div class="buy-note" style="display:block">Tapping Buy opens our Telegram bot. ' +
         "We accept crypto payments only — pay with USDT, USDC, USDe, USD1, BNB, ETH, XRP, TON or USDT-TON " +
         "and receive your files right in the chat.</div>" +
@@ -522,13 +439,5 @@
       location.hash = "#/";
     }
   });
-
-  var CATCOLORS = { all: "#f5a623", english: "#4da3ff", maths: "#c586ff",
-    science: "#4dd08a", others: "#9db2c4" };
-  Array.prototype.forEach.call(document.querySelectorAll(".cattabs button"),
-    function (b) {
-      var c = CATCOLORS[b.getAttribute("data-cat")];
-      if (c) b.style.setProperty("--catc", c);
-    });
   route();
 })();
