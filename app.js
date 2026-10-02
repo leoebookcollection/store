@@ -127,11 +127,37 @@
     return allSetsLoading;
   }
 
+
+  var DL = {}, dlReady = null;
+  function ensureDL() {
+    if (!dlReady) {
+      dlReady = fetch("data/downloads.json", { cache: "no-cache" }).then(function (r) {
+        return r.ok ? r.json() : {};
+      }).then(function (d) { DL = d || {}; return DL; })
+        .catch(function () { DL = {}; return DL; });
+    }
+    return dlReady;
+  }
+  ensureDL();
+  function dlSeed(c) {
+    // stable display base from the set id (same on both ebook stores),
+    // tiered by set size, always under 100
+    var h = 0, s = String(c.id);
+    for (var i = 0; i < s.length; i++) h = ((h << 5) - h + s.charCodeAt(i)) | 0;
+    h = Math.abs(h);
+    var fc = c.file_count || 1;
+    if (fc >= 6) return 35 + (h % 25);
+    if (fc >= 3) return 20 + (h % 20);
+    return 8 + (h % 15);
+  }
+  function dlOf(c) { return dlSeed(c) + (DL[c.id] || 0); }
+
   function cardHTML(c) {
     return '<a class="card" href="#/s/' + c.id + '">' +
       coverHTML(c.id, c.name) +
       '<div class="cbody"><div class="cname">' + esc(c.name) + "</div>" +
-      '<div class="cmeta">' + c.file_count + " files · " + esc(fmtSize(c.total_size)) + "</div>" +
+      '<div class="cmeta">' + c.file_count + " files · " + esc(fmtSize(c.total_size)) +
+      ' <span class="dlc">⬇ ' + dlOf(c) + " downloads</span></div>" +
       '<div class="cprice">' + esc(price(c.price)) + "</div></div></a>";
   }
 
@@ -223,7 +249,7 @@
 
   function renderHome() {
     view.innerHTML = '<div class="loading">Loading…</div>';
-    Promise.all([ensureHome(), ensureCovers(), ensureAll(), ensureCats()]).then(function (arr) {
+    Promise.all([ensureHome(), ensureCovers(), ensureAll(), ensureCats(), ensureDL()]).then(function (arr) {
       var d = arr[0], cmap = arr[1], sets = arr[2];
       var html = "";
       // When a specific category is active, show ONLY the filtered grid (no Featured/series)
@@ -316,7 +342,7 @@
     qInput.value = q;
     if (!q) { location.hash = "#/"; return; }
     view.innerHTML = '<div class="loading">Searching…</div>';
-    Promise.all([ensureAll(), ensureCovers()]).then(function (arr) {
+    Promise.all([ensureAll(), ensureCovers(), ensureDL()]).then(function (arr) {
       var sets = arr[0];
       var hits = searchSets(sets, q);
       var html = '<a class="back" href="#/">‹ Back</a>' +
@@ -347,7 +373,7 @@
 
   function renderDetail(id) {
     view.innerHTML = '<div class="loading">Loading…</div>';
-    Promise.all([getJSON("data/sets/" + encodeURIComponent(id) + ".json"), ensureCovers()]).then(function (arr) {
+    Promise.all([getJSON("data/sets/" + encodeURIComponent(id) + ".json"), ensureCovers(), ensureDL()]).then(function (arr) {
       var d = arr[0];
       var comps = (d.components && d.components.length)
         ? d.components.join(", ") : "—";
@@ -369,7 +395,8 @@
         }).join("") + "</div>" +
         '<div class="dbox">📦 Contents (' + d.file_count + " files):<br>" + esc(comps) + "</div>" +
         '<div class="dbox"><ul class="files">' + files + "</ul></div>" +
-        '<div class="dbox">Total size: <b>' + esc(fmtSize(d.total_size)) + "</b></div>" +
+        '<div class="dbox">Total size: <b>' + esc(fmtSize(d.total_size)) +
+        '</b> · <span class="dlc">⬇ ' + dlOf(d) + " downloads</span></div>" +
         '<div class="buy-note" style="display:block">Tapping Buy opens our Telegram bot. ' +
         "We accept crypto payments only — pay with USDT, USDC, USDe, USD1, BNB, ETH, XRP, TON or USDT-TON " +
         "and receive your files right in the chat.</div>" +
