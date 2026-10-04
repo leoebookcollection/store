@@ -1,0 +1,4 @@
+User-agent: *
+Allow: /
+
+Sitemap: https://leoebookcollection.github.io/store/sitemap.xml
