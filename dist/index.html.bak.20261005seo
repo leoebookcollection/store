@@ -1,0 +1,40 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#161616">
+<link rel="icon" type="image/svg+xml" href="favicon.svg">
+<title>Radiant eBookshop — Pay with crypto</title>
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+<header class="topbar">
+  <div class="toprow">
+    <a class="brand" href="#/">
+      <span class="mark">R</span>
+      <span class="word"><b>Radiant</b><small>eBookshop · Pay with crypto</small></span>
+    </a>
+    <a class="homebtn" href="#/" aria-label="Home">🏠</a>
+  </div>
+  <nav class="cattabs" id="catTabs">
+    <button data-cat="all" class="active">All</button>
+    <button data-cat="english">English</button>
+    <button data-cat="maths">Maths</button>
+    <button data-cat="science">Science</button>
+    <button data-cat="others">Others</button>
+  </nav>
+  <form id="searchForm" class="searchbar" role="search" autocomplete="off">
+    <input id="q" type="search" placeholder="Search books… (e.g. Grammar, Flyers, KET)" aria-label="Search books">
+    <button type="submit" aria-label="Search">🔍</button>
+  </form>
+</header>
+<main id="view"></main>
+<footer class="foot">
+  All purchases are completed securely via our Telegram bot 📩
+</footer>
+<script src="config.js"></script>
+<script src="app.js?v=4"></script>
+<!-- Cloudflare Web Analytics --><script type='module' src='https://static.cloudflareinsights.com/beacon.min.js' data-cf-beacon='{"token": "806eb83e35d6484682775180c8f29084"}'></script><!-- End Cloudflare Web Analytics -->
+</body>
+</html>
